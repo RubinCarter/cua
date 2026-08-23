@@ -45,8 +45,6 @@ trap cleanup EXIT INT TERM
 server_command=(
   valgrind
   --leak-check=full
-  --gen-suppressions=all
-  --num-callers=40
   --show-leak-kinds=definite,possible
   --errors-for-leak-kinds=definite,possible
   --error-exitcode=99
@@ -75,7 +73,7 @@ for _ in {1..120}; do
     echo "cua-driver server exited before readiness" >&2
     exit 1
   fi
-  if timeout 3s "$driver" status --socket "$socket" >"$artifact_dir/status.txt" 2>>"$artifact_dir/client.log"; then
+  if timeout 3s "$driver" sessions list --json --socket "$socket" >"$artifact_dir/readiness.json" 2>>"$artifact_dir/client.log"; then
     ready=1
     break
   fi
@@ -83,13 +81,12 @@ for _ in {1..120}; do
 done
 [[ $ready -eq 1 ]] || { echo "cua-driver server did not become ready within 60 seconds" >&2; exit 1; }
 
-grep -qi 'running' "$artifact_dir/status.txt"
+python3 -c 'import json, pathlib, sys; assert json.loads(pathlib.Path(sys.argv[1]).read_text()) == {"count": 0, "sessions": []}' "$artifact_dir/readiness.json"
 printf '%s\n' \
-  "$driver status --socket $socket" \
   "$driver sessions list --json --socket $socket" \
   "$driver call get_config '{}' --socket $socket" \
   "$driver call set_config '{\"key\":\"max_image_dimension\",\"value\":640}' --socket $socket" \
-  "$driver call check_permissions '{}' --socket $socket" \
+  "$driver call list_apps '{}' --socket $socket" \
   "$driver mcp --socket $socket" \
   "$driver stop --socket $socket" >>"$artifact_dir/commands.log"
 
@@ -97,7 +94,7 @@ timeout 10s "$driver" sessions list --json --socket "$socket" >"$artifact_dir/se
 timeout 10s "$driver" call get_config '{}' --socket "$socket" >"$artifact_dir/config-before.json"
 timeout 10s "$driver" call set_config '{"key":"max_image_dimension","value":640}' --socket "$socket" >"$artifact_dir/config-set.json"
 timeout 10s "$driver" call get_config '{}' --socket "$socket" >"$artifact_dir/config-after.json"
-timeout 10s "$driver" call check_permissions '{}' --socket "$socket" >"$artifact_dir/permissions.json"
+timeout 10s "$driver" call list_apps '{}' --socket "$socket" >"$artifact_dir/apps.json"
 
 cat >"$smoke_dir/mcp-requests.jsonl" <<'JSONL'
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"valgrind-e2e","version":"1.0.0"}}}
@@ -136,14 +133,14 @@ def load(name):
 
 before = load("config-before.json")
 after = load("config-after.json")
-permissions = load("permissions.json")
+apps = load("apps.json")
 sessions_before = load("sessions-before.json")
 sessions_after = load("sessions-after.json")
 
 assert before["platform"] == "linux"
 assert after["max_image_dimension"] == 640
 assert after["max_image_dimension"] != before["max_image_dimension"]
-assert permissions["x11"] is True
+assert isinstance(apps["apps"], list)
 assert sessions_before == {"count": 0, "sessions": []}
 assert sessions_after == {"count": 0, "sessions": []}
 
