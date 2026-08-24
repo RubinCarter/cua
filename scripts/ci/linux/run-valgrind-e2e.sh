@@ -42,6 +42,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Do not let glibc retain joined thread stacks, which obscures ownership at exit.
+export GLIBC_TUNABLES="${GLIBC_TUNABLES:+$GLIBC_TUNABLES:}glibc.pthread.stack_cache_size=0"
+
 server_command=(
   valgrind
   --leak-check=full
